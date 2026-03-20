@@ -1,0 +1,73 @@
+{
+  "oci": {
+    "user": "ocid1.user.oc1..example_user_ocid",
+    "fingerprint": "aa:bb:cc:dd:ee:ff:11:22:33:44:55:66",
+    "key_file": "/path/to/oci_api_key.pem",
+    "tenancy": "ocid1.tenancy.oc1..example_tenancy_ocid",
+    "region": "us-ashburn-1"
+  },
+  "load_balancer": {
+    "id": "ocid1.loadbalancer.oc1.region.example_load_balancer_ocid"
+  },
+  "instances": [
+    "ocid1.instance.oc1.region.example_instance_ocid_1",
+    "ocid1.instance.oc1.region.example_instance_ocid_2",
+    "ocid1.instance.oc1.region.example_instance_ocid_3",
+    "ocid1.instance.oc1.region.example_instance_ocid_4"
+  ],
+  "email": {
+    "core_recipients": [
+      "core.user1@example.com",
+      "core.user2@example.com"
+    ],
+    "internal_recipients": [
+      "internal.user1@example.com"
+    ],
+    "external_recipients": [
+      "external.user1@example.com"
+    ],
+    "sender_email": "monitoring@example.com",
+    "smtp_server": "smtp.example.com",
+    "smtp_port": 587,
+    "smtp_username": "smtp_user@example.com",
+    "smtp_password": "example_password"
+  },
+  "resource_limits": {
+    "cpu_utilization_limit": 80,
+    "memory_utilization_limit": 80,
+    "tablespace_utilization_limit": 80,
+    "tablespace_alert_cooldown_hours": 24
+  },
+  "db_details": {
+    "id": "ocid1.database.oc1.region.example_database_ocid",
+    "namespace": "oci_database"
+  },
+  "db_list": [
+    {
+      "db_name": "EXAMPLEDB1",
+      "db_dsn": "10.0.0.10",
+      "db_port": "1521",
+      "db_service_name": "exampledb1.subnet.vcn.oraclevcn.com",
+      "db_user": "READONLY",
+      "db_password": "example_password"
+    },
+    {
+      "db_name": "EXAMPLEDB2",
+      "db_dsn": "10.0.0.11",
+      "db_port": "1521",
+      "db_service_name": "exampledb2.subnet.vcn.oraclevcn.com",
+      "db_user": "READONLY",
+      "db_password": "example_password"
+    }
+  ],
+  "password_expiry_targets": [
+    {
+      "db_service_name": "exampledb1.subnet.vcn.oraclevcn.com",
+      "users": ["READONLY", "APP_USER"]
+    },
+    {
+      "db_service_name": "exampledb2.subnet.vcn.oraclevcn.com",
+      "users": ["READONLY", "SYSTEM"]
+    }
+  ]
+}
