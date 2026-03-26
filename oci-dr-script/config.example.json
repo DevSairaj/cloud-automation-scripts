@@ -1,0 +1,43 @@
+{
+  "oci": {
+    "user": "ocid1.user.oc1..example_user_ocid",
+    "fingerprint": "aa:bb:cc:dd:ee:ff:11:22:33:44",
+    "key_file": "/path/to/your/oci_api_key.pem",
+    "tenancy": "ocid1.tenancy.oc1..example_tenancy_ocid",
+    "region": "us-ashburn-1"
+  },
+  "load_balancer": {
+    "id": "ocid1.loadbalancer.oc1.region.example_load_balancer_ocid",
+    "name": "example-load-balancer"
+  },
+  "instances": [
+    {
+      "primary_id": "ocid1.instance.oc1.region.example_primary_instance_1",
+      "standby_id": "ocid1.instance.oc1.region.example_standby_instance_1",
+      "primary_name": "app_primary_1",
+      "standby_name": "app_standby_1",
+      "ui_backend_set_name": "ui_backend_set_1",
+      "api_backend_set_name": "api_backend_set_1"
+    },
+    {
+      "primary_id": "ocid1.instance.oc1.region.example_primary_instance_2",
+      "standby_id": "ocid1.instance.oc1.region.example_standby_instance_2",
+      "primary_name": "app_primary_2",
+      "standby_name": "app_standby_2",
+      "ui_backend_set_name": "ui_backend_set_2",
+      "api_backend_set_name": "api_backend_set_2"
+    }
+  ],
+  "email": {
+    "receiver_email_list": ["recipient@example.com"],
+    "sender_email_key": "example_key",
+    "sender_email_encrypted_string": "example_encrypted_value",
+    "smtp_server_key": "example_key",
+    "smtp_server_encrypted_string": "example_encrypted_value",
+    "smtp_password_key": "example_key",
+    "smtp_password_encrypted_string": "example_encrypted_value",
+    "smtp_username_key": "example_key",
+    "smtp_username_encrypted_string": "example_encrypted_value",
+    "smtp_port": 587
+  }
+}
