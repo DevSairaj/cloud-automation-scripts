@@ -1,9 +1,9 @@
 """
 This is the latest and optimized script for OCI monitoring.
-Updated on 16 April 2026.
-Refactored monitoring to be config-driven (schemas and backend set exclusions)
-and improved Prometheus metrics by separating total and active database session tracking.
+Updated on 17 July 2025.
+Updated the logic to use readonly users from the updated config.json
 """
+
 # Standard library imports
 import os
 import sys
@@ -11,6 +11,7 @@ import time
 import logging
 from datetime import datetime, timedelta
 import smtplib
+import subprocess
 import json
 
 # Third-party imports
@@ -55,8 +56,6 @@ class MonitoringOCI:
         self.db_namespace = self.config.get("db_details", {}).get("namespace")
         self.db_list = self.config.get("db_list", [])
         self.load_balancer_id = self.config.get("load_balancer", {}).get("id")
-        self.skip_backend_sets = self.config.get("skip_backend_sets", [])
-        self.schema_targets = self.config.get("schema_targets", [])
         self.cpu_utilization_limit = int(
             self.config.get("resource_limits", {}).get("cpu_utilization_limit", 80)
         )
@@ -154,20 +153,10 @@ class MonitoringOCI:
                 "Latest Patch Version of Entergy-CX",
                 ["version"],
             ),
-            # "db_active_users": Gauge(
-            #     "oci_db_active_users",
-            #     "Count of active users in the OCI Database",
-            #     ["db_id", "schema"],
-            # ),
-            "db_sessions_total": Gauge(
-                "db_sessions_total",
-                "Total number of database sessions",
-                ["db_id", "schema"]
-            ),
-            "db_sessions_active": Gauge(
-                "db_sessions_active",
-                "Number of active database sessions",
-                ["db_id", "schema"]
+            "db_active_users": Gauge(
+                "oci_db_active_users",
+                "Count of active users in the OCI Database",
+                ["db_id", "schema"],
             ),
             "cx_active_users": Gauge(
                 "cx_active_users",
@@ -183,6 +172,31 @@ class MonitoringOCI:
 
         # Initialize SMTP configurations
         email_config = self.config.get("email", {})
+
+        # self.smtp_config = {
+        #     "sender_email_key": email_config.get("sender_email_key", "").encode(),
+        #     "sender_email_encrypted_string": email_config.get(
+        #         "sender_email_encrypted_string", ""
+        #     ).encode(),
+        #     "smtp_server_key": email_config.get("smtp_server_key", "").encode(),
+        #     "smtp_server_encrypted_string": email_config.get(
+        #         "smtp_server_encrypted_string", ""
+        #     ).encode(),
+        #     "smtp_password_key": email_config.get("smtp_password_key", "").encode(),
+        #     "smtp_password_encrypted_string": email_config.get(
+        #         "smtp_password_encrypted_string", ""
+        #     ).encode(),
+        #     "smtp_username_key": email_config.get("smtp_username_key", "").encode(),
+        #     "smtp_username_encrypted_string": email_config.get(
+        #         "smtp_username_encrypted_string", ""
+        #     ).encode(),
+        #     "smtp_port": email_config.get("smtp_port", 587),
+        #     # "receiver_email_list": email_config.get("receiver_email_list", []),
+        #     "core_recipients": email_config.get("core_recipients", []),
+        #     "internal_recipients": email_config.get("internal_recipients", []),
+        #     "external_recipients": email_config.get("external_recipients", []),
+        # }
+
         self.smtp_config = {
             "sender_email": email_config.get("sender_email", ""),
             "smtp_server": email_config.get("smtp_server", ""),
@@ -191,7 +205,7 @@ class MonitoringOCI:
             "smtp_password": email_config.get("smtp_password", ""),
             "core_recipients": email_config.get("core_recipients", []),
             "internal_recipients": email_config.get("internal_recipients", []),
-            "external_recipients": email_config.get("external_recipients", [])
+            "external_recipients": email_config.get("external_recipients", []),
         }
 
         # Initialize alert status and timestamps
@@ -201,8 +215,10 @@ class MonitoringOCI:
         self.db_storage_alert_sent = {"alert": None, "resolve": None}
         self.lb_health_alert_sent = {"alert": None, "resolve": None}
         self.backend_set_health_alert_sent = {}
+
         self.password_expiry_warning_days = 7
         self.password_expiry_alert_sent = {}
+
         self.tablespace_alert_sent = {}   # { "DB|TS" : {"alert": datetime, "resolve": datetime} }
 
     def _load_config(self, file_path='config.json'):
@@ -308,6 +324,11 @@ class MonitoringOCI:
         # Decrypt email credentials and server info
         try:
             email_body = MIMEText(message, 'plain')
+            # sender_email = self._decrypt_string(self.smtp_config['sender_email_key'], self.smtp_config['sender_email_encrypted_string'])
+            # smtp_server = self._decrypt_string(self.smtp_config['smtp_server_key'], self.smtp_config['smtp_server_encrypted_string'])
+            # smtp_username = self._decrypt_string(self.smtp_config['smtp_username_key'], self.smtp_config['smtp_username_encrypted_string'])
+            # smtp_password = self._decrypt_string(self.smtp_config['smtp_password_key'], self.smtp_config['smtp_password_encrypted_string'])
+
             sender_email = self.smtp_config['sender_email']
             smtp_server = self.smtp_config['smtp_server']
             smtp_username = self.smtp_config['smtp_username']
@@ -739,7 +760,7 @@ class MonitoringOCI:
             self.get_instance_memory_utilization(instance_id, instance_name, instance_status_value)
             time.sleep(0.5)
 
-            self.get_filesystem_utilization(instance_id, instance_name, instance_status_value)
+            self.get_filesystem_utilization(instance_id, instance_name, instance_status_value)  # <-- Add this line
             self._print_blank_line()
             time.sleep(0.5)
 
@@ -749,6 +770,44 @@ class MonitoringOCI:
             self.get_network_io(instance_id, instance_name, instance_status_value)
             self._print_blank_line()
             time.sleep(0.5)
+
+            # # Check if PM2 is installed and running
+            # self.is_pm2_running(instance_name)
+            # self._print_blank_line()
+            # time.sleep(0.5)
+
+            # # Check if PM2 is installed and running
+            # if self.is_pm2_running(instance_name):
+            #     self.get_pm2_service_status(instance_name)
+
+            # self._print_blank_line()
+            # time.sleep(0.5)
+
+    # def is_pm2_running(self, instance_name):
+    #     """Check if PM2 is installed on the instance by checking its version."""
+    #     try:
+    #         # Check if PM2 is installed by running `pm2 --version`
+    #         result = subprocess.run(['pm2', '--version'], capture_output=True, text=True)
+    #         if result.returncode == 0:
+    #             logger.info(f"PM2 is installed on the instance '{instance_name}'. Version: {result.stdout.strip()}")
+    #             return True
+    #         else:
+    #             logger.warning(f"PM2 command failed with exit code {result.returncode} on instance '{instance_name}'. PM2 might not be installed.")
+    #             return False
+    #     except FileNotFoundError:
+    #         logger.error(f"PM2 command not found on instance '{instance_name}'. Ensure PM2 is installed.")
+    #         return False
+    #     except Exception as e:
+    #         logger.error(f"An unexpected error occurred while checking PM2 on instance '{instance_name}': {e}")
+    #         return False
+
+    # def get_pm2_service_status(self, instance_name):
+    #     """Fetch PM2 service status from the instance."""
+    #     try:
+    #         result = subprocess.run(['pm2', 'status'], capture_output=True, text=True, check=True)
+    #         print(result.stdout.strip())
+    #     except subprocess.CalledProcessError as e:
+    #         print(f"Error: {e}")
 
     def get_database_name(self):
         """Function to get database name."""
@@ -766,6 +825,7 @@ class MonitoringOCI:
         try:
             db_details = self.database_client.get_database(self.db_id)
             db_status = db_details.data.lifecycle_state
+            # logger.info(f"Status of database '{db_name}': {db_status}")
             return db_status
 
         except Exception as e:
@@ -991,12 +1051,6 @@ class MonitoringOCI:
             if backend_sets:
                 for backend_set in backend_sets:
                     backend_set_name = backend_set.name
-
-                    # Skip configured backend sets
-                    if backend_set_name in self.skip_backend_sets:
-                        logger.info(f"Skipping backend set '{backend_set_name}' as per config.")
-                        continue
-
                     backend_set_health = self.load_balancer_client.get_backend_set_health(self.load_balancer_id, backend_set_name).data.status
                     health_mapping = {
                         'OK': 1,
@@ -1053,6 +1107,44 @@ class MonitoringOCI:
         except Exception as e:
             logger.error(f"Failed to fetch backend set health: {e}")
             self._log_exception()
+
+    # def get_password_expiry_date(self, db):
+    #     """Function to fetch the password expiry date from a given database configuration."""
+    #     try:
+    #         # Create DSN from database configuration
+    #         dsn = cx_Oracle.makedsn(db['db_dsn'], db['db_port'], service_name=db['db_service_name'])
+
+    #         # Normal user connection
+    #         connection = cx_Oracle.connect(
+    #             user=db['db_user'],
+    #             password=db['db_password'],
+    #             dsn=dsn
+    #         )
+    #         logger.info(f"Connected to {db['db_name']} as {db['db_user']}")
+
+    #         # Use the connection in a context manager to ensure it is closed properly
+    #         with connection:
+    #             # Create a cursor and execute the SQL query
+    #             with connection.cursor() as cursor:
+    #                 cursor.execute(
+    #                     "SELECT USERNAME, EXPIRY_DATE FROM USER_USERS")
+    #                 result = cursor.fetchone()
+
+    #         if result:
+    #             username, expiry_date = result
+    #             return expiry_date  # Return as is, unless timezone is present
+    #         else:
+    #             logger.warning(f"No expiry date found for the username '{db['db_user']}' in DB '{db['db_name']}'.")
+    #             return None
+
+    #     except cx_Oracle.DatabaseError as e:
+    #         logger.error(f"Database Error for DB {db['db_name']} ({db['db_dsn']}): {e}")
+    #         self._log_exception()
+    #         return None
+    #     except Exception as e:
+    #         logger.error(f"Unexpected error in monitoring script: {e}")
+    #         self._log_exception()
+    #         return None
 
     def get_password_expiry_date(self):
         """
@@ -1115,9 +1207,42 @@ class MonitoringOCI:
             self._log_exception()
             return results
     
+    # def update_password_expiry_metric(self):
+    #     """Function to update the password expiry date metric and send alerts if needed."""
+    #     for db in self.db_list:
+    #         # Skip the SYS user in this function
+    #         # if db['db_user'].upper() == 'SYS':
+    #         #     logger.info(f"Skipped password expiry metric update for '{db['db_name']}' with username '{db['db_user']}'.")
+    #         #     self._print_blank_line()
+    #         #     continue
+
+    #         expiry_date = self.get_password_expiry_date(db)
+    #         if expiry_date:
+    #             days_until_expiry = (expiry_date - datetime.now()).days
+    #             self.metrics['db_password_expiry_date'].labels(self.db_id).set(days_until_expiry)
+    #             logger.info(f"Password expiry date for '{db['db_name']}' with username '{db['db_user']}' is {expiry_date}. Days left: {days_until_expiry}.")
+
+    #             # Initialize alert tracking for this DB if not already done
+    #             if db['db_name'] not in self.password_expiry_alert_sent:
+    #                 self.password_expiry_alert_sent[db['db_name']] = False
+
+    #             # Send alert if days until expiry is less than or equal to the warning threshold
+    #             if days_until_expiry <= self.password_expiry_warning_days:
+    #                 if not self.password_expiry_alert_sent[db['db_name']]:
+    #                     subject = "Alert: Database Password Expiry Approaching"
+    #                     message = f"The password for the username '{db['db_user']}' in DB '{db['db_name']}' is about to expire in {days_until_expiry} days."
+    #                     email_sent = self.send_email('common', subject, message, 'DB Password Expiry')
+                        
+    #                     if email_sent:
+    #                         logger.info(f"Password expiry alert sent for '{db['db_name']}' with username '{db['db_user']}'.")
+    #                         self.password_expiry_alert_sent[db['db_name']] = True
+
+    #         self._print_blank_line()
+    #         time.sleep(0.5)
+
     def update_password_expiry_metric(self):
         """Function to update the password expiry date metric and send alerts if needed."""
-        results = self.get_password_expiry_date()
+        results = self.get_password_expiry_date()  # now returns all DBs + users
 
         if not results:
             logger.warning("No password expiry results available.")
@@ -1352,10 +1477,7 @@ class MonitoringOCI:
             return None
 
     def show_active_cx_users_count(self):
-        """
-        Function to log active CX application users from the CURADCWATER database
-        using the READONLY user.
-        """
+        """Function to log active users for databases with 'DCWATER_EXCHANGE' user."""
         # Filter the db_list to include only databases where the user is 'DCWATER_EXCHANGE'
         dcwater_dbs = [db for db in self.db_list if db['db_user'] == 'READONLY' and db['db_name'] == 'CURADCWATER']
 
@@ -1369,28 +1491,18 @@ class MonitoringOCI:
             self.metrics['cx_active_users'].labels(db_id=self.db_id).remove(self.db_id)
 
     def get_dcw_cx_latest_patch_version(self):
-        """
-        Fetch latest patch version from CURADCWATER (DCW CX) database.
-        """
+        db = self.config['db_list'][0]
 
-        # Get CURADCWATER DB config safely
-        db = next(
-            (db for db in self.db_list if db['db_name'] == 'CURADCWATER'),
-            None
-        )
-
-        if not db:
-            logger.error("CURADCWATER database config not found in db_list.")
-            return None
-
+        # Extract the database connection details for the third DB (CURAENTERGYSTAGE)
         db_dsn = db['db_dsn']
         db_port = db['db_port']
         db_service_name = db['db_service_name']
         db_user = db['db_user']
         db_password = db['db_password']
-
+        # Create the DSN (Data Source Name) using the instance attributes
         dsn_tns = cx_Oracle.makedsn(db_dsn, db_port, service_name=db_service_name)
 
+        # Establish the database connection
         connection = cx_Oracle.connect(user=db_user, password=db_password, dsn=dsn_tns)
 
         try:
@@ -1403,27 +1515,28 @@ class MonitoringOCI:
             """
             cursor.execute(query)
 
+            # Fetch the result
             result = cursor.fetchone()
 
             if result:
                 latest_patch_version = result[0]
 
+                # Log the latest patch version
                 logger.info(f"DCW-CX Latest Patch Version: {latest_patch_version}")
 
-                self.metrics['dcw_cx_latest_patch_version'].labels(
-                    version=latest_patch_version
-                ).set(1)
-
+                # Update Prometheus gauge with the version label and a placeholder value
+                # If using a gauge, set a numeric value. For example, you might use 1 to indicate the presence of a version.
+                self.metrics['dcw_cx_latest_patch_version'].labels(version=latest_patch_version).set(1)
                 return latest_patch_version
 
             else:
+                # Handle the case where no patch details are found
                 logger.info("No patch details found.")
-                self.metrics['dcw_cx_latest_patch_version'].labels(
-                    version='unknown'
-                ).set(0)
+                self.metrics['dcw_cx_latest_patch_version'].labels(version='unknown').set(0)
                 return None
 
         finally:
+            # Close the cursor and connection
             cursor.close()
             connection.close()
 
@@ -1477,261 +1590,169 @@ class MonitoringOCI:
     #         cursor.close()
     #         connection.close()
 
-    def get_active_users_by_schema(self, service_name, schema_name):
-        """
-        Fetch total and active session count for a given schema using C##READONLY.
-        """
+    def get_active_users_for_entergy_cura_stage(self, db):
+        """Fetch active users for ENTERGY_CURA_STAGE schema."""
         try:
-            # Get system-level user (C##READONLY)
-            system_db = next(
-                (db for db in self.db_list if db['db_user'] == 'C##READONLY'),
-                None
-            )
+            db_status = self.get_database_status()  # Placeholder function to get DB status
 
-            if not system_db:
-                logger.error("C##READONLY not found in db_list")
-                return 0, 0
+            if db_status != 'AVAILABLE':
+                logger.warning(f"Active users data not available as the database '{db['db_name']}' is not active.")
+                return 0
 
-            # Create DSN for target service (PDB)
-            dsn = cx_Oracle.makedsn(
-                system_db['db_dsn'],
-                system_db['db_port'],
-                service_name=service_name
-            )
+            dsn = cx_Oracle.makedsn(db['db_dsn'], db['db_port'], service_name=db['db_service_name'])
 
-            # Connect using system-level user
+            # connection = cx_Oracle.connect(
+            #     user=db['db_user'], 
+            #     password=db['db_password'],
+            #     dsn=dsn, 
+            #     mode=cx_Oracle.SYSDBA
+            # )
             connection = cx_Oracle.connect(
-                user=system_db['db_user'],
-                password=system_db['db_password'],
+                user=db['db_user'],
+                password=db['db_password'],
                 dsn=dsn
             )
+            logger.info(f"Connected to {db['db_name']} as {db['db_user']}")
 
             with connection:
                 with connection.cursor() as cursor:
                     cursor.execute(
                         """
-                        SELECT 
-                            COUNT(*) AS total_sessions,
-                            SUM(CASE WHEN STATUS = 'ACTIVE' THEN 1 ELSE 0 END) AS active_sessions
-                        FROM V$SESSION
-                        WHERE USERNAME IS NOT NULL
-                        AND UPPER(SCHEMANAME) = UPPER(:schema)
-                        """,
-                        schema=schema_name
+                        SELECT COUNT(*)
+                        FROM(
+                            SELECT DISTINCT USERNAME, CON_ID, STATUS, SCHEMANAME, PROGRAM, MACHINE, OSUSER, LOGON_TIME, LAST_CALL_ET
+                            FROM V$SESSION
+                            WHERE USERNAME IS NOT NULL AND STATUS = 'ACTIVE' AND SCHEMANAME = 'ENTERGY_CURA_STAGE'
+                        )
+                        """
                     )
                     result = cursor.fetchone()
 
-            total_sessions = result[0] if result else 0
-            active_sessions = result[1] if result and result[1] else 0
+            if result and result[0] > 0:
+                active_users_count = result[0]
+                logger.info(f"Count of active users in ENTERGY_CURA_STAGE: {active_users_count}")
+                return active_users_count
+            else:
+                logger.warning(f"No active users found in schema 'ENTERGY_CURA_STAGE'.")
+                return 0
 
-            logger.info(f"{schema_name} → Total: {total_sessions}, Active: {active_sessions}")
-
-            return total_sessions, active_sessions
-
-        except Exception as e:
-            logger.error(f"Error fetching session data for {schema_name}: {e}")
+        except cx_Oracle.DatabaseError as e:
+            logger.error(f"Database Error for DB {db['db_name']} ({db['db_dsn']}): {e}")
             self._log_exception()
-            return 0, 0
-        
-    def update_active_users_metric_for_all_schemas(self):
-        """
-        Fetch and update total & active session metrics for all schemas from config.
-        """
+            return 0
+        except Exception as e:
+            logger.error(f"Unexpected error in monitoring script: {e}")
+            self._log_exception()
+            return 0
 
-        if not self.schema_targets:
-            logger.warning("No schema_targets found in config.json")
-            return
+    def get_active_users_for_entergy_cura_prod(self, db):
+        """Fetch active users for ENTERGY_CURA_PROD schema."""
+        try:
+            db_status = self.get_database_status()
 
-        for target in self.schema_targets:
-            service_name = target.get("service_name")
-            schema_name = target.get("schema")
+            if db_status != 'AVAILABLE':
+                logger.warning(f"Active users data not available as the database '{db['db_name']}' is not active.")
+                return 0
 
-            if not service_name or not schema_name:
-                logger.warning(f"Invalid schema target config: {target}")
-                continue
+            dsn = cx_Oracle.makedsn(db['db_dsn'], db['db_port'], service_name=db['db_service_name'])
 
-            total, active = self.get_active_users_by_schema(service_name, schema_name)
+            # connection = cx_Oracle.connect(
+            #     user=db['db_user'], 
+            #     password=db['db_password'],
+            #     dsn=dsn, 
+            #     mode=cx_Oracle.SYSDBA
+            # )
+            connection = cx_Oracle.connect(
+                user=db['db_user'],
+                password=db['db_password'],
+                dsn=dsn
+            )            
+            logger.info(f"Connected to {db['db_name']} as {db['db_user']} (SYSDBA)")
 
-            # ✅ Clean logging (consistent with your codebase)
-            logger.info(f"{schema_name} → Total: {total}, Active: {active}")
+            with connection:
+                with connection.cursor() as cursor:
+                    cursor.execute(
+                        """
+                        SELECT COUNT(*)
+                        FROM(
+                            SELECT DISTINCT USERNAME, CON_ID, STATUS, SCHEMANAME, PROGRAM, MACHINE, OSUSER, LOGON_TIME, LAST_CALL_ET
+                            FROM V$SESSION
+                            WHERE USERNAME IS NOT NULL AND STATUS = 'ACTIVE' AND SCHEMANAME = 'ENTERGY_CURA_PROD'
+                        )
+                        """
+                    )
+                    result = cursor.fetchone()
 
-            # Prometheus metrics
-            self.metrics['db_sessions_total'].labels(
-                db_id=self.db_id,
-                schema=schema_name
-            ).set(total)
+            if result and result[0] > 0:
+                active_users_count = result[0]
+                logger.info(f"Count of active users in ENTERGY_CURA_PROD: {active_users_count}")
+                return active_users_count
+            else:
+                logger.warning(f"No active users found in schema 'ENTERGY_CURA_PROD'.")
+                return 0
 
-            self.metrics['db_sessions_active'].labels(
-                db_id=self.db_id,
-                schema=schema_name
-            ).set(active)
+        except cx_Oracle.DatabaseError as e:
+            logger.error(f"Database Error for DB {db['db_name']} ({db['db_dsn']}): {e}")
+            self._log_exception()
+            return 0
+        except Exception as e:
+            logger.error(f"Unexpected error in monitoring script: {e}")
+            self._log_exception()
+            return 0
 
-            self._print_blank_line()
-            time.sleep(0.5)
+    def get_active_users_for_dcwater_exchange(self, db):
+        """Fetch active users for DCWATER_EXCHANGE schema."""
+        try:
+            db_status = self.get_database_status()
 
-    # def get_active_users_for_entergy_cura_stage(self, db):
-    #     """Fetch active users for ENTERGY_CURA_STAGE schema."""
-    #     try:
-    #         db_status = self.get_database_status()  # Placeholder function to get DB status
+            if db_status != 'AVAILABLE':
+                logger.warning(f"Active users data not available as the database '{db['db_name']}' is not active.")
+                return 0
+            dsn = cx_Oracle.makedsn(db['db_dsn'], db['db_port'], service_name=db['db_service_name'])
 
-    #         if db_status != 'AVAILABLE':
-    #             logger.warning(f"Active users data not available as the database '{db['db_name']}' is not active.")
-    #             return 0
+            # connection = cx_Oracle.connect(
+            #     user=db['db_user'], 
+            #     password=db['db_password'],
+            #     dsn=dsn, 
+            #     mode=cx_Oracle.SYSDBA
+            # )
+            connection = cx_Oracle.connect(
+                user=db['db_user'],
+                password=db['db_password'],
+                dsn=dsn
+            )
+            logger.info(f"Connected to {db['db_name']} as {db['db_user']} (SYSDBA)")
 
-    #         dsn = cx_Oracle.makedsn(db['db_dsn'], db['db_port'], service_name=db['db_service_name'])
+            with connection:
+                with connection.cursor() as cursor:
+                    cursor.execute(
+                        """
+                        SELECT COUNT(*)
+                        FROM(
+                            SELECT DISTINCT USERNAME, CON_ID, STATUS, SCHEMANAME, PROGRAM, MACHINE, OSUSER, LOGON_TIME, LAST_CALL_ET
+                            FROM V$SESSION
+                            WHERE USERNAME IS NOT NULL AND STATUS = 'ACTIVE' AND SCHEMANAME = 'DCWATER_EXCHANGE'
+                        )
+                        """
+                    )
+                    result = cursor.fetchone()
 
-    #         # connection = cx_Oracle.connect(
-    #         #     user=db['db_user'], 
-    #         #     password=db['db_password'],
-    #         #     dsn=dsn, 
-    #         #     mode=cx_Oracle.SYSDBA
-    #         # )
-    #         connection = cx_Oracle.connect(
-    #             user=db['db_user'],
-    #             password=db['db_password'],
-    #             dsn=dsn
-    #         )
-    #         logger.info(f"Connected to {db['db_name']} as {db['db_user']}")
+            if result and result[0] > 0:
+                active_users_count = result[0]
+                logger.info(f"Count of active users in DCWATER_EXCHANGE: {active_users_count}")
+                return active_users_count
+            else:
+                logger.warning(f"No active users found in schema 'DCWATER_EXCHANGE'.")
+                return 0
 
-    #         with connection:
-    #             with connection.cursor() as cursor:
-    #                 cursor.execute(
-    #                     """
-    #                     SELECT COUNT(*)
-    #                     FROM(
-    #                         SELECT DISTINCT USERNAME, CON_ID, STATUS, SCHEMANAME, PROGRAM, MACHINE, OSUSER, LOGON_TIME, LAST_CALL_ET
-    #                         FROM V$SESSION
-    #                         WHERE USERNAME IS NOT NULL AND STATUS = 'ACTIVE' AND SCHEMANAME = 'ENTERGY_CURA_STAGE'
-    #                     )
-    #                     """
-    #                 )
-    #                 result = cursor.fetchone()
-
-    #         if result and result[0] > 0:
-    #             active_users_count = result[0]
-    #             logger.info(f"Count of active users in ENTERGY_CURA_STAGE: {active_users_count}")
-    #             return active_users_count
-    #         else:
-    #             logger.warning(f"No active users found in schema 'ENTERGY_CURA_STAGE'.")
-    #             return 0
-
-    #     except cx_Oracle.DatabaseError as e:
-    #         logger.error(f"Database Error for DB {db['db_name']} ({db['db_dsn']}): {e}")
-    #         self._log_exception()
-    #         return 0
-    #     except Exception as e:
-    #         logger.error(f"Unexpected error in monitoring script: {e}")
-    #         self._log_exception()
-    #         return 0
-
-    # def get_active_users_for_entergy_cura_prod(self, db):
-    #     """Fetch active users for ENTERGY_CURA_PROD schema."""
-    #     try:
-    #         db_status = self.get_database_status()
-
-    #         if db_status != 'AVAILABLE':
-    #             logger.warning(f"Active users data not available as the database '{db['db_name']}' is not active.")
-    #             return 0
-
-    #         dsn = cx_Oracle.makedsn(db['db_dsn'], db['db_port'], service_name=db['db_service_name'])
-
-    #         # connection = cx_Oracle.connect(
-    #         #     user=db['db_user'], 
-    #         #     password=db['db_password'],
-    #         #     dsn=dsn, 
-    #         #     mode=cx_Oracle.SYSDBA
-    #         # )
-    #         connection = cx_Oracle.connect(
-    #             user=db['db_user'],
-    #             password=db['db_password'],
-    #             dsn=dsn
-    #         )            
-    #         logger.info(f"Connected to {db['db_name']} as {db['db_user']} (SYSDBA)")
-
-    #         with connection:
-    #             with connection.cursor() as cursor:
-    #                 cursor.execute(
-    #                     """
-    #                     SELECT COUNT(*)
-    #                     FROM(
-    #                         SELECT DISTINCT USERNAME, CON_ID, STATUS, SCHEMANAME, PROGRAM, MACHINE, OSUSER, LOGON_TIME, LAST_CALL_ET
-    #                         FROM V$SESSION
-    #                         WHERE USERNAME IS NOT NULL AND STATUS = 'ACTIVE' AND SCHEMANAME = 'ENTERGY_CURA_PROD'
-    #                     )
-    #                     """
-    #                 )
-    #                 result = cursor.fetchone()
-
-    #         if result and result[0] > 0:
-    #             active_users_count = result[0]
-    #             logger.info(f"Count of active users in ENTERGY_CURA_PROD: {active_users_count}")
-    #             return active_users_count
-    #         else:
-    #             logger.warning(f"No active users found in schema 'ENTERGY_CURA_PROD'.")
-    #             return 0
-
-    #     except cx_Oracle.DatabaseError as e:
-    #         logger.error(f"Database Error for DB {db['db_name']} ({db['db_dsn']}): {e}")
-    #         self._log_exception()
-    #         return 0
-    #     except Exception as e:
-    #         logger.error(f"Unexpected error in monitoring script: {e}")
-    #         self._log_exception()
-    #         return 0
-
-    # def get_active_users_for_dcwater_exchange(self, db):
-    #     """Fetch active users for DCWATER_EXCHANGE schema."""
-    #     try:
-    #         db_status = self.get_database_status()
-
-    #         if db_status != 'AVAILABLE':
-    #             logger.warning(f"Active users data not available as the database '{db['db_name']}' is not active.")
-    #             return 0
-    #         dsn = cx_Oracle.makedsn(db['db_dsn'], db['db_port'], service_name=db['db_service_name'])
-
-    #         # connection = cx_Oracle.connect(
-    #         #     user=db['db_user'], 
-    #         #     password=db['db_password'],
-    #         #     dsn=dsn, 
-    #         #     mode=cx_Oracle.SYSDBA
-    #         # )
-    #         connection = cx_Oracle.connect(
-    #             user=db['db_user'],
-    #             password=db['db_password'],
-    #             dsn=dsn
-    #         )
-    #         logger.info(f"Connected to {db['db_name']} as {db['db_user']} (SYSDBA)")
-
-    #         with connection:
-    #             with connection.cursor() as cursor:
-    #                 cursor.execute(
-    #                     """
-    #                     SELECT COUNT(*)
-    #                     FROM(
-    #                         SELECT DISTINCT USERNAME, CON_ID, STATUS, SCHEMANAME, PROGRAM, MACHINE, OSUSER, LOGON_TIME, LAST_CALL_ET
-    #                         FROM V$SESSION
-    #                         WHERE USERNAME IS NOT NULL AND STATUS = 'ACTIVE' AND SCHEMANAME = 'DCWATER_EXCHANGE'
-    #                     )
-    #                     """
-    #                 )
-    #                 result = cursor.fetchone()
-
-    #         if result and result[0] > 0:
-    #             active_users_count = result[0]
-    #             logger.info(f"Count of active users in DCWATER_EXCHANGE: {active_users_count}")
-    #             return active_users_count
-    #         else:
-    #             logger.warning(f"No active users found in schema 'DCWATER_EXCHANGE'.")
-    #             return 0
-
-    #     except cx_Oracle.DatabaseError as e:
-    #         logger.error(f"Database Error for DB {db['db_name']} ({db['db_dsn']}): {e}")
-    #         self._log_exception()
-    #         return 0
-    #     except Exception as e:
-    #         logger.error(f"Unexpected error in monitoring script: {e}")
-    #         self._log_exception()
-    #         return 0
+        except cx_Oracle.DatabaseError as e:
+            logger.error(f"Database Error for DB {db['db_name']} ({db['db_dsn']}): {e}")
+            self._log_exception()
+            return 0
+        except Exception as e:
+            logger.error(f"Unexpected error in monitoring script: {e}")
+            self._log_exception()
+            return 0
 
     # def get_active_users_for_entergy_exchange(self, db):
     #     """Fetch active users for ENTERGY_EXCHANGE schema."""
@@ -1788,141 +1809,141 @@ class MonitoringOCI:
     #         self._log_exception()
     #         return 0
         
-    # def get_active_users_for_curaentergyproddx(self, db):
-    #     """Fetch active users for CURAENTERGYPRODDX schema."""
-    #     try:
-    #         db_status = self.get_database_status()
+    def get_active_users_for_curaentergyproddx(self, db):
+        """Fetch active users for CURAENTERGYPRODDX schema."""
+        try:
+            db_status = self.get_database_status()
 
-    #         if db_status != 'AVAILABLE':
-    #             logger.warning(f"Active users data not available as the database '{db['db_name']}' is not active.")
-    #             return 0
+            if db_status != 'AVAILABLE':
+                logger.warning(f"Active users data not available as the database '{db['db_name']}' is not active.")
+                return 0
 
-    #         dsn = cx_Oracle.makedsn(db['db_dsn'], db['db_port'], service_name=db['db_service_name'])
+            dsn = cx_Oracle.makedsn(db['db_dsn'], db['db_port'], service_name=db['db_service_name'])
 
-    #         # connection = cx_Oracle.connect(
-    #         #     user=db['db_user'], 
-    #         #     password=db['db_password'],
-    #         #     dsn=dsn, 
-    #         #     mode=cx_Oracle.SYSDBA
-    #         # )
-    #         connection = cx_Oracle.connect(
-    #             user=db['db_user'],
-    #             password=db['db_password'],
-    #             dsn=dsn
-    #         )
-    #         logger.info(f"Connected to {db['db_name']} as {db['db_user']} (SYSDBA)")
+            # connection = cx_Oracle.connect(
+            #     user=db['db_user'], 
+            #     password=db['db_password'],
+            #     dsn=dsn, 
+            #     mode=cx_Oracle.SYSDBA
+            # )
+            connection = cx_Oracle.connect(
+                user=db['db_user'],
+                password=db['db_password'],
+                dsn=dsn
+            )
+            logger.info(f"Connected to {db['db_name']} as {db['db_user']} (SYSDBA)")
 
-    #         with connection:
-    #             with connection.cursor() as cursor:
-    #                 cursor.execute(
-    #                     """
-    #                     SELECT COUNT(*)
-    #                     FROM(
-    #                         SELECT DISTINCT USERNAME, CON_ID, STATUS, SCHEMANAME, PROGRAM, MACHINE, OSUSER, LOGON_TIME, LAST_CALL_ET
-    #                         FROM V$SESSION
-    #                         WHERE USERNAME IS NOT NULL AND STATUS = 'ACTIVE' AND SCHEMANAME = 'CURAENTERGYPRODDX'
-    #                     )
-    #                     """
-    #                 )
-    #                 result = cursor.fetchone()
+            with connection:
+                with connection.cursor() as cursor:
+                    cursor.execute(
+                        """
+                        SELECT COUNT(*)
+                        FROM(
+                            SELECT DISTINCT USERNAME, CON_ID, STATUS, SCHEMANAME, PROGRAM, MACHINE, OSUSER, LOGON_TIME, LAST_CALL_ET
+                            FROM V$SESSION
+                            WHERE USERNAME IS NOT NULL AND STATUS = 'ACTIVE' AND SCHEMANAME = 'CURAENTERGYPRODDX'
+                        )
+                        """
+                    )
+                    result = cursor.fetchone()
 
-    #         if result and result[0] > 0:
-    #             active_users_count = result[0]
-    #             logger.info(f"Count of active users in CURAENTERGYPRODDX: {active_users_count}")
-    #             return active_users_count
-    #         else:
-    #             logger.warning(f"No active users found in schema 'CURAENTERGYPRODDX'.")
-    #             return 0
+            if result and result[0] > 0:
+                active_users_count = result[0]
+                logger.info(f"Count of active users in CURAENTERGYPRODDX: {active_users_count}")
+                return active_users_count
+            else:
+                logger.warning(f"No active users found in schema 'CURAENTERGYPRODDX'.")
+                return 0
 
-    #     except cx_Oracle.DatabaseError as e:
-    #         logger.error(f"Database Error for DB {db['db_name']} ({db['db_dsn']}): {e}")
-    #         self._log_exception()
-    #         return 0
-    #     except Exception as e:
-    #         logger.error(f"Unexpected error in monitoring script: {e}")
-    #         self._log_exception()
-    #         return 0
+        except cx_Oracle.DatabaseError as e:
+            logger.error(f"Database Error for DB {db['db_name']} ({db['db_dsn']}): {e}")
+            self._log_exception()
+            return 0
+        except Exception as e:
+            logger.error(f"Unexpected error in monitoring script: {e}")
+            self._log_exception()
+            return 0
 
-    # def get_active_users_for_curaentergydx(self, db):
-    #     """Fetch active users for CURAENTERGYDX schema."""
-    #     try:
-    #         db_status = self.get_database_status()
+    def get_active_users_for_curaentergydx(self, db):
+        """Fetch active users for CURAENTERGYDX schema."""
+        try:
+            db_status = self.get_database_status()
 
-    #         if db_status != 'AVAILABLE':
-    #             logger.warning(f"Active users data not available as the database '{db['db_name']}' is not active.")
-    #             return 0
+            if db_status != 'AVAILABLE':
+                logger.warning(f"Active users data not available as the database '{db['db_name']}' is not active.")
+                return 0
 
-    #         dsn = cx_Oracle.makedsn(db['db_dsn'], db['db_port'], service_name=db['db_service_name'])
+            dsn = cx_Oracle.makedsn(db['db_dsn'], db['db_port'], service_name=db['db_service_name'])
 
-    #         # connection = cx_Oracle.connect(
-    #         #     user=db['db_user'], 
-    #         #     password=db['db_password'],
-    #         #     dsn=dsn, 
-    #         #     mode=cx_Oracle.SYSDBA
-    #         # )
-    #         connection = cx_Oracle.connect(
-    #             user=db['db_user'],
-    #             password=db['db_password'],
-    #             dsn=dsn
-    #         )
-    #         logger.info(f"Connected to {db['db_name']} as {db['db_user']} (SYSDBA)")
+            # connection = cx_Oracle.connect(
+            #     user=db['db_user'], 
+            #     password=db['db_password'],
+            #     dsn=dsn, 
+            #     mode=cx_Oracle.SYSDBA
+            # )
+            connection = cx_Oracle.connect(
+                user=db['db_user'],
+                password=db['db_password'],
+                dsn=dsn
+            )
+            logger.info(f"Connected to {db['db_name']} as {db['db_user']} (SYSDBA)")
 
-    #         with connection:
-    #             with connection.cursor() as cursor:
-    #                 cursor.execute(
-    #                     """
-    #                     SELECT COUNT(*)
-    #                     FROM(
-    #                         SELECT DISTINCT USERNAME, CON_ID, STATUS, SCHEMANAME, PROGRAM, MACHINE, OSUSER, LOGON_TIME, LAST_CALL_ET
-    #                         FROM V$SESSION
-    #                         WHERE USERNAME IS NOT NULL AND STATUS = 'ACTIVE' AND SCHEMANAME = 'CURAENTERGYDX'
-    #                     )
-    #                     """
-    #                 )
-    #                 result = cursor.fetchone()
+            with connection:
+                with connection.cursor() as cursor:
+                    cursor.execute(
+                        """
+                        SELECT COUNT(*)
+                        FROM(
+                            SELECT DISTINCT USERNAME, CON_ID, STATUS, SCHEMANAME, PROGRAM, MACHINE, OSUSER, LOGON_TIME, LAST_CALL_ET
+                            FROM V$SESSION
+                            WHERE USERNAME IS NOT NULL AND STATUS = 'ACTIVE' AND SCHEMANAME = 'CURAENTERGYDX'
+                        )
+                        """
+                    )
+                    result = cursor.fetchone()
 
-    #         if result and result[0] > 0:
-    #             active_users_count = result[0]
-    #             logger.info(f"Count of active users in CURAENTERGYDX: {active_users_count}")
-    #             return active_users_count
-    #         else:
-    #             logger.warning(f"No active users found in schema 'CURAENTERGYDX'.")
-    #             return 0
+            if result and result[0] > 0:
+                active_users_count = result[0]
+                logger.info(f"Count of active users in CURAENTERGYDX: {active_users_count}")
+                return active_users_count
+            else:
+                logger.warning(f"No active users found in schema 'CURAENTERGYDX'.")
+                return 0
 
-    #     except cx_Oracle.DatabaseError as e:
-    #         logger.error(f"Database Error for DB {db['db_name']} ({db['db_dsn']}): {e}")
-    #         self._log_exception()
-    #         return 0
-    #     except Exception as e:
-    #         logger.error(f"Unexpected error in monitoring script: {e}")
-    #         self._log_exception()
-    #         return 0
+        except cx_Oracle.DatabaseError as e:
+            logger.error(f"Database Error for DB {db['db_name']} ({db['db_dsn']}): {e}")
+            self._log_exception()
+            return 0
+        except Exception as e:
+            logger.error(f"Unexpected error in monitoring script: {e}")
+            self._log_exception()
+            return 0
 
-    # def update_active_users_metric_for_all_schemas(self):
-    #     """Fetch and update the active user metrics for all schemas."""
-    #     sys_dbs = [db for db in self.db_list if db['db_user'].upper() == 'C##READONLY']
+    def update_active_users_metric_for_all_schemas(self):
+        """Fetch and update the active user metrics for all schemas."""
+        sys_dbs = [db for db in self.db_list if db['db_user'].upper() == 'C##READONLY']
 
-    #     for db in sys_dbs:
-    #         # Get active users for each schema
-    #         entergy_cura_stage_users = self.get_active_users_for_entergy_cura_stage(db)
-    #         self._print_blank_line()
-    #         entergy_cura_prod_users = self.get_active_users_for_entergy_cura_prod(db)
-    #         self._print_blank_line()
-    #         dcwater_exchange_users = self.get_active_users_for_dcwater_exchange(db)
-    #         self._print_blank_line()
-    #         # entergy_exchange_users = self.get_active_users_for_entergy_exchange(db)
-    #         # self._print_blank_line()
-    #         curaentergyproddx_users = self.get_active_users_for_curaentergyproddx(db)
-    #         self._print_blank_line()
-    #         curaentergydx_users = self.get_active_users_for_curaentergydx(db)
+        for db in sys_dbs:
+            # Get active users for each schema
+            entergy_cura_stage_users = self.get_active_users_for_entergy_cura_stage(db)
+            self._print_blank_line()
+            entergy_cura_prod_users = self.get_active_users_for_entergy_cura_prod(db)
+            self._print_blank_line()
+            dcwater_exchange_users = self.get_active_users_for_dcwater_exchange(db)
+            self._print_blank_line()
+            # entergy_exchange_users = self.get_active_users_for_entergy_exchange(db)
+            # self._print_blank_line()
+            curaentergyproddx_users = self.get_active_users_for_curaentergyproddx(db)
+            self._print_blank_line()
+            curaentergydx_users = self.get_active_users_for_curaentergydx(db)
 
-    #         # Update Prometheus metrics for each schema
-    #         self.metrics['db_active_users'].labels(db_id=self.db_id, schema="ENTERGY_CURA_STAGE").set(entergy_cura_stage_users)
-    #         self.metrics['db_active_users'].labels(db_id=self.db_id, schema="ENTERGY_CURA_PROD").set(entergy_cura_prod_users)
-    #         self.metrics['db_active_users'].labels(db_id=self.db_id, schema="DCWATER_EXCHANGE").set(dcwater_exchange_users)
-    #         # self.metrics['db_active_users'].labels(db_id=self.db_id, schema="ENTERGY_EXCHANGE").set(entergy_exchange_users)
-    #         self.metrics['db_active_users'].labels(db_id=self.db_id, schema="CURAENTERGYPRODDX").set(curaentergyproddx_users)
-    #         self.metrics['db_active_users'].labels(db_id=self.db_id, schema="CURAENTERGYDX").set(curaentergydx_users)
+            # Update Prometheus metrics for each schema
+            self.metrics['db_active_users'].labels(db_id=self.db_id, schema="ENTERGY_CURA_STAGE").set(entergy_cura_stage_users)
+            self.metrics['db_active_users'].labels(db_id=self.db_id, schema="ENTERGY_CURA_PROD").set(entergy_cura_prod_users)
+            self.metrics['db_active_users'].labels(db_id=self.db_id, schema="DCWATER_EXCHANGE").set(dcwater_exchange_users)
+            # self.metrics['db_active_users'].labels(db_id=self.db_id, schema="ENTERGY_EXCHANGE").set(entergy_exchange_users)
+            self.metrics['db_active_users'].labels(db_id=self.db_id, schema="CURAENTERGYPRODDX").set(curaentergyproddx_users)
+            self.metrics['db_active_users'].labels(db_id=self.db_id, schema="CURAENTERGYDX").set(curaentergydx_users)
 
     def run(self):
         """Main loop to perform monitoring tasks and handle server operations."""

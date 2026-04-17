@@ -9,6 +9,11 @@
   "load_balancer": {
     "id": "ocid1.loadbalancer.oc1.region.example_load_balancer_ocid"
   },
+  "skip_backend_sets": [
+    "example_backend_set_1",
+    "example_backend_set_2",
+    "example_backend_set_3"
+  ],
   "instances": [
     "ocid1.instance.oc1.region.example_instance_ocid_1",
     "ocid1.instance.oc1.region.example_instance_ocid_2",
@@ -68,6 +73,16 @@
     {
       "db_service_name": "exampledb2.subnet.vcn.oraclevcn.com",
       "users": ["READONLY", "SYSTEM"]
+    }
+  ],
+  "schema_targets": [
+    {
+      "service_name": "exampledb1.subnet.vcn.oraclevcn.com",
+      "schema": "APP_SCHEMA_1"
+    },
+    {
+      "service_name": "exampledb2.subnet.vcn.oraclevcn.com",
+      "schema": "APP_SCHEMA_2"
     }
   ]
 }
